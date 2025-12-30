@@ -31,7 +31,11 @@ def get_static_files_app() -> StaticFiles | None:
     Returns None if the directory doesn't exist (frontend not built).
     """
     if _REACT_ASSETS.exists():
-        return StaticFiles(directory=str(_REACT_ASSETS))
+        # Starlette's StaticFiles validates the directory at construction time by
+        # default. In development/CI (or when tests mock Path.exists), the folder
+        # may not actually be present on disk. Using check_dir=False keeps this
+        # factory side-effect-free; missing files will still result in 404s.
+        return StaticFiles(directory=str(_REACT_ASSETS), check_dir=False)
     return None
 
 
