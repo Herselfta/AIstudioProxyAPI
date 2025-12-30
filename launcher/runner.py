@@ -57,6 +57,45 @@ class Launcher:  # pragma: no cover
         self.effective_active_auth_json_path: Optional[str] = None
         self.simulated_os_for_camoufox = "linux"
 
+    def _ensure_camoufox_debug_port_available(self) -> None:
+        """Ensure Camoufox debug port is available.
+
+        Headless mode is expected to be non-interactive. If the default port is
+        occupied (common on dev machines where Chrome/Node tooling uses 9222),
+        auto-select the next available port to avoid hard failure.
+        """
+
+        desired_port = int(self.args.camoufox_debug_port)
+
+        # Use lsof-based detection (find_pids_on_port) to reliably catch IPv6
+        # listeners on macOS.
+        if find_pids_on_port(desired_port):
+            if self.final_launch_mode in ("headless", "virtual_headless") or DIRECT_LAUNCH:
+                original = desired_port
+                # Scan a small range to find a free port.
+                for candidate in range(original + 1, original + 101):
+                    if not find_pids_on_port(candidate) and not is_port_in_use(
+                        candidate, host="0.0.0.0"
+                    ):
+                        self.args.camoufox_debug_port = candidate
+                        logger.warning(
+                            f"Camoufox 调试端口 {original} 已被占用，自动切换到 {candidate}。"
+                            "（可通过 --camoufox-debug-port 或 .env 的 DEFAULT_CAMOUFOX_PORT 固定）"
+                        )
+                        return
+
+                logger.error(
+                    f"Camoufox 调试端口 {original} 已被占用，且在 {original+1}-{original+100} 范围内未找到可用端口。"
+                )
+                sys.exit(1)
+            else:
+                # In interactive debug mode, keep existing behavior and let the
+                # internal Camoufox process error clearly.
+                logger.warning(
+                    f"Camoufox 调试端口 {desired_port} 似乎已被占用。"
+                    "如启动失败，请使用 --camoufox-debug-port 指定其他端口。"
+                )
+
     def run(self):
         # 检查是否是内部启动调用
         # 注意：不能只检查 startswith("--internal-")，因为 --internal-camoufox-proxy 是主进程参数
@@ -87,6 +126,9 @@ class Launcher:  # pragma: no cover
             self._handle_auth_file_selection()
         self._check_xvfb()
         self._check_server_port()
+
+        # Ensure internal Camoufox debug port won't collide with other local processes.
+        self._ensure_camoufox_debug_port_available()
 
         logger.debug("[Init] 步骤 3: 准备并启动 Camoufox...")
         self._resolve_auth_file_path()
