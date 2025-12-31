@@ -38,6 +38,25 @@ from .network import setup_network_interception_and_scripts
 logger = logging.getLogger("AIStudioProxyServer")
 
 
+def _is_retryable_navigation_error(error_str: str) -> bool:
+    """Best-effort 判断 Playwright/浏览器导航失败是否可能通过重试恢复。"""
+    s = (error_str or "").upper()
+    retry_markers = (
+        "NS_ERROR_NET_RESET",
+        "NS_ERROR_NET_INTERRUPT",
+        "NS_ERROR_NET_TIMEOUT",
+        "ERR_CONNECTION_RESET",
+        "ERR_INTERNET_DISCONNECTED",
+        "ERR_NETWORK_CHANGED",
+        "ERR_TIMED_OUT",
+        "ERR_NAME_NOT_RESOLVED",
+        "ERR_PROXY_CONNECTION_FAILED",
+        "ECONNRESET",
+        "ETIMEDOUT",
+    )
+    return any(m in s for m in retry_markers)
+
+
 async def initialize_page_logic(  # pragma: no cover
     browser: AsyncBrowser, storage_state_path: Optional[str] = None
 ) -> Tuple[AsyncPage, bool]:
@@ -192,9 +211,41 @@ async def initialize_page_logic(  # pragma: no cover
                 # Setup debug listeners for error snapshots
                 setup_debug_listeners(found_page)
             try:
-                await found_page.goto(
-                    target_full_url, wait_until="domcontentloaded", timeout=90000
+                # 允许轻量重试：某些网络错误（尤其在代理/不稳定网络环境）可能是瞬态的。
+                nav_retries = int(os.environ.get("INIT_NAV_RETRIES", "2") or "2")
+                nav_retry_delay_s = float(
+                    os.environ.get("INIT_NAV_RETRY_DELAY_S", "0.8") or "0.8"
                 )
+                last_nav_err: Optional[BaseException] = None
+                for attempt in range(1, max(1, nav_retries) + 1):
+                    try:
+                        await found_page.goto(
+                            target_full_url,
+                            wait_until="domcontentloaded",
+                            timeout=90000,
+                        )
+                        last_nav_err = None
+                        break
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        last_nav_err = e
+                        err_str = str(e)
+                        should_retry = (
+                            attempt < max(1, nav_retries)
+                            and _is_retryable_navigation_error(err_str)
+                        )
+                        if should_retry:
+                            logger.warning(
+                                f"[导航] 导航失败(第 {attempt}/{nav_retries} 次): {err_str}；将重试..."
+                            )
+                            # 给事件循环一次喘息机会（对测试也更友好）
+                            await asyncio.sleep(max(0.0, nav_retry_delay_s))
+                            continue
+                        break
+
+                if last_nav_err is not None:
+                    raise last_nav_err
                 current_url = found_page.url
                 logger.debug(f"新页面导航尝试完成。当前 URL: {current_url}")
             except asyncio.CancelledError:
@@ -205,27 +256,69 @@ async def initialize_page_logic(  # pragma: no cover
 
                 await save_error_snapshot("init_new_page_nav_fail")
                 error_str = str(new_page_nav_err)
-                if "NS_ERROR_NET_INTERRUPT" in error_str:
+                if (
+                    "NS_ERROR_NET_INTERRUPT" in error_str
+                    or "NS_ERROR_NET_RESET" in error_str
+                    or "ERR_PROXY_CONNECTION_FAILED" in error_str
+                    or "ERR_CONNECTION_RESET" in error_str
+                ):
                     logger.error("\n" + "=" * 30 + " 网络导航错误提示 " + "=" * 30)
+                    logger.error(f"导航到 '{target_full_url}' 失败，出现网络错误。")
+                    if "NS_ERROR_NET_RESET" in error_str:
+                        logger.error("错误类型: NS_ERROR_NET_RESET (连接被重置)")
+                    elif "NS_ERROR_NET_INTERRUPT" in error_str:
+                        logger.error("错误类型: NS_ERROR_NET_INTERRUPT (网络中断)")
+                    elif "ERR_PROXY_CONNECTION_FAILED" in error_str:
+                        logger.error("错误类型: ERR_PROXY_CONNECTION_FAILED (代理连接失败)")
+                    elif "ERR_CONNECTION_RESET" in error_str:
+                        logger.error("错误类型: ERR_CONNECTION_RESET (连接被重置)")
+
+                    # 尽量把关键上下文打印出来，便于用户自查
+                    unified_proxy = os.environ.get("UNIFIED_PROXY_CONFIG", "")
+                    http_proxy = os.environ.get("HTTP_PROXY", "")
+                    https_proxy = os.environ.get("HTTPS_PROXY", "")
+                    playwright_proxy = None
+                    try:
+                        playwright_proxy = (
+                            server.PLAYWRIGHT_PROXY_SETTINGS.get("server")
+                            if getattr(server, "PLAYWRIGHT_PROXY_SETTINGS", None)
+                            else None
+                        )
+                    except Exception:
+                        playwright_proxy = None
+
+                    if unified_proxy or http_proxy or https_proxy or playwright_proxy:
+                        logger.error("\n当前代理相关配置(用于排查):")
+                        if unified_proxy:
+                            logger.error(f"  UNIFIED_PROXY_CONFIG={unified_proxy}")
+                        if http_proxy:
+                            logger.error(f"  HTTP_PROXY={http_proxy}")
+                        if https_proxy:
+                            logger.error(f"  HTTPS_PROXY={https_proxy}")
+                        if playwright_proxy:
+                            logger.error(f"  Playwright proxy server={playwright_proxy}")
+
+                    logger.error("\n可能的原因及排查建议:")
                     logger.error(
-                        f"导航到 '{target_full_url}' 失败，出现网络中断错误 (NS_ERROR_NET_INTERRUPT)。"
+                        "     1. 代理本身: 若使用本地代理(如 127.0.0.1:7890)，请确认代理程序已启动且支持 HTTPS CONNECT。"
                     )
-                    logger.error("这通常表示浏览器在尝试加载页面时连接被意外断开。")
-                    logger.error("可能的原因及排查建议:")
                     logger.error(
-                        "     1. 网络连接: 请检查你的本地网络连接是否稳定，并尝试在普通浏览器中访问目标网址。"
+                        "     2. 代理规则: 确认 aistudio.google.com 未被错误地直连/拒绝/重定向；必要时尝试临时关闭代理验证。"
                     )
                     logger.error(
-                        "     2. AI Studio 服务: 确认 aistudio.google.com 服务本身是否可用。"
+                        "     3. 网络连接: 请检查你的本地网络连接是否稳定，并尝试在普通浏览器中访问目标网址。"
                     )
                     logger.error(
-                        "     3. 防火墙/代理/VPN: 检查本地防火墙、杀毒软件、代理或 VPN 设置。"
+                        "     4. AI Studio 服务: 确认 aistudio.google.com 服务本身是否可用。"
                     )
                     logger.error(
-                        "     4. Camoufox 服务: 确认 launch_camoufox.py 脚本是否正常运行。"
+                        "     5. 防火墙/代理/VPN: 检查本地防火墙、杀毒软件、代理或 VPN 设置。"
                     )
                     logger.error(
-                        "     5. 系统资源问题: 确保系统有足够的内存和 CPU 资源。"
+                        "     6. Camoufox 服务: 确认 launch_camoufox.py 脚本是否正常运行。"
+                    )
+                    logger.error(
+                        "     7. 系统资源问题: 确保系统有足够的内存和 CPU 资源。"
                     )
                     logger.error("=" * 74 + "\n")
                 raise RuntimeError(

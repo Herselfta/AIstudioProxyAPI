@@ -5,6 +5,7 @@ Provides automatic detection and rebuild of stale frontend assets.
 """
 
 import logging
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -68,6 +69,34 @@ def check_npm_available() -> bool:
     return shutil.which("npm") is not None
 
 
+def _run_npm(
+    npm_args: list[str], *, cwd: str, timeout: int
+) -> subprocess.CompletedProcess[str]:
+    """Run npm in a Windows-safe way.
+
+    On Windows, npm is typically a .cmd shim. Launching it via CreateProcess
+    without a shell can raise FileNotFoundError. Using cmd.exe avoids that.
+    """
+    if os.name == "nt":
+        # Use cmd.exe to execute npm.cmd reliably
+        cmd = " ".join(["npm", *npm_args])
+        return subprocess.run(
+            ["cmd.exe", "/d", "/s", "/c", cmd],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
+    return subprocess.run(
+        ["npm", *npm_args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
 def rebuild_frontend() -> bool:
     """
     重新构建前端。
@@ -87,18 +116,18 @@ def rebuild_frontend() -> bool:
     if not (_FRONTEND_DIR / "node_modules").exists():
         logger.info("[Build] 正在安装前端依赖...")
         try:
-            result = subprocess.run(
-                ["npm", "install"],
-                cwd=str(_FRONTEND_DIR),
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
+            result = _run_npm(["install"], cwd=str(_FRONTEND_DIR), timeout=120)
             if result.returncode != 0:
                 logger.error(f"npm install 失败: {result.stderr}")
                 return False
         except subprocess.TimeoutExpired:
             logger.error("npm install 超时")
+            return False
+        except FileNotFoundError:
+            logger.error(
+                "未找到可执行文件 npm (或无法启动 npm)。请安装 Node.js (包含 npm)，"
+                "或在 .env 中设置 SKIP_FRONTEND_BUILD=true / 启动时加 --skip-frontend-build 跳过前端构建。"
+            )
             return False
         except Exception as e:
             logger.error(f"npm install 出错: {e}")
@@ -106,13 +135,7 @@ def rebuild_frontend() -> bool:
 
     logger.info("[Build] 正在构建前端...")
     try:
-        result = subprocess.run(
-            ["npm", "run", "build"],
-            cwd=str(_FRONTEND_DIR),
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
+        result = _run_npm(["run", "build"], cwd=str(_FRONTEND_DIR), timeout=60)
         if result.returncode == 0:
             logger.info("[Build] 前端构建成功")
             return True
@@ -129,6 +152,12 @@ def rebuild_frontend() -> bool:
             return False
     except subprocess.TimeoutExpired:
         logger.error("前端构建超时")
+        return False
+    except FileNotFoundError:
+        logger.error(
+            "未找到可执行文件 npm (或无法启动 npm)。请安装 Node.js (包含 npm)，"
+            "或在 .env 中设置 SKIP_FRONTEND_BUILD=true / 启动时加 --skip-frontend-build 跳过前端构建。"
+        )
         return False
     except Exception as e:
         logger.error(f"前端构建出错: {e}")
