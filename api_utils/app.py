@@ -7,6 +7,7 @@ import multiprocessing
 import queue  # <-- FIX: Added missing import for queue.Empty
 import sys
 import time
+from pathlib import Path
 from asyncio import Lock, Queue
 from contextlib import asynccontextmanager
 from typing import Any, Awaitable, Callable
@@ -162,6 +163,46 @@ async def _initialize_browser_and_page() -> None:
         state.model_list_fetch_event.set()
 
 
+def _log_ready_endpoints() -> None:
+    """Log user-facing URLs and listening ports after startup completes."""
+
+    logger = state.logger
+
+    # Server port is configured via env PORT (see server.py)
+    try:
+        port = int(get_environment_variable("PORT", "2048"))
+    except Exception:
+        port = 2048
+
+    bind_host = get_environment_variable("HOST", "0.0.0.0") or "0.0.0.0"
+    local_base = f"http://127.0.0.1:{port}"
+    localhost_base = f"http://localhost:{port}"
+
+    # Best-effort: detect whether frontend build exists, to avoid confusing users
+    # when '/' may return 503 due to missing dist assets.
+    project_root = Path(__file__).resolve().parents[1]
+    frontend_index = project_root / "static" / "frontend" / "dist" / "index.html"
+    has_frontend = frontend_index.exists()
+
+    logger.info(f"[监听] FastAPI: {bind_host}:{port}")
+    logger.info(
+        "[访问] "
+        f"health: {local_base}/health | "
+        f"docs: {local_base}/docs | "
+        f"openapi: {local_base}/openapi.json"
+    )
+    logger.info(
+        "[访问] "
+        f"local: {local_base} | localhost: {localhost_base}"
+        + (" | frontend: /" if has_frontend else " | frontend: (未构建，/ 可能返回 503)")
+    )
+    logger.info(f"[API] OpenAI 兼容端点前缀: {local_base}/v1 (例如: /v1/models)")
+
+    stream_port = get_environment_variable("STREAM_PORT", "3120")
+    if stream_port and stream_port != "0":
+        logger.info(f"[监听] STREAM proxy: 127.0.0.1:{stream_port} (内部使用)")
+
+
 async def _shutdown_resources() -> None:
     """Gracefully shut down all resources."""
     logger = state.logger
@@ -241,6 +282,7 @@ async def lifespan(app: FastAPI):
 
         startup_duration = time.time() - startup_start_time
         logger.info(f"[系统] 服务器启动完成 (耗时: {startup_duration:.2f}秒)")
+        _log_ready_endpoints()
         state.is_initializing = False
         yield
     except asyncio.CancelledError:

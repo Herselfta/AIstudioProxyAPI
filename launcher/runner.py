@@ -96,6 +96,24 @@ class Launcher:  # pragma: no cover
                     "如启动失败，请使用 --camoufox-debug-port 指定其他端口。"
                 )
 
+    def _force_kill_old_processes_enabled(self) -> bool:
+        """Whether to force-kill processes occupying required ports.
+
+        In headless/virtual_headless mode, stale background instances of this
+        project are a common source of port conflicts (FastAPI 2048 and stream
+        proxy 3120). We default to force-killing by PID when the port is
+        occupied, unless explicitly disabled.
+
+        Disable with:
+          FORCE_KILL_OLD_PROCESSES=0
+        """
+
+        env_force_kill = os.environ.get("FORCE_KILL_OLD_PROCESSES")
+        if env_force_kill is None:
+            return self.final_launch_mode in ("headless", "virtual_headless") or DIRECT_LAUNCH
+
+        return env_force_kill.strip().lower() in ("1", "true", "yes", "y", "on")
+
     def run(self):
         # 检查是否是内部启动调用
         # 注意：不能只检查 startswith("--internal-")，因为 --internal-camoufox-proxy 是主进程参数
@@ -126,6 +144,7 @@ class Launcher:  # pragma: no cover
             self._handle_auth_file_selection()
         self._check_xvfb()
         self._check_server_port()
+        self._check_stream_port()
 
         # Ensure internal Camoufox debug port won't collide with other local processes.
         self._ensure_camoufox_debug_port_available()
@@ -317,6 +336,9 @@ class Launcher:  # pragma: no cover
         )
         port_is_available = False
         uvicorn_bind_host = "0.0.0.0"
+
+        force_kill_old = self._force_kill_old_processes_enabled()
+
         if is_port_in_use(server_target_port, host=uvicorn_bind_host):
             logger.warning(
                 f"端口 {server_target_port} (主机 {uvicorn_bind_host}) 当前被占用。"
@@ -354,9 +376,29 @@ class Launcher:  # pragma: no cover
                     else:
                         logger.info("用户选择不自动终止或超时。将继续尝试启动服务器。")
                 else:
-                    logger.error(
-                        "无头模式下，不会尝试自动终止占用端口的进程。服务器启动可能会失败。"
-                    )
+                    if force_kill_old:
+                        logger.warning(
+                            "无头模式下，检测到端口被占用，将强制终止占用端口的旧进程并重试。"
+                            "（可设置 FORCE_KILL_OLD_PROCESSES=0 禁用）"
+                        )
+                        for pid in pids_on_port:
+                            kill_process_interactive(pid)
+
+                        time.sleep(2)
+                        if not is_port_in_use(server_target_port, host=uvicorn_bind_host):
+                            logger.info(
+                                f"端口 {server_target_port} (主机 {uvicorn_bind_host}) 现在可用。"
+                            )
+                            port_is_available = True
+                        else:
+                            logger.error(
+                                f"尝试强制终止后，端口 {server_target_port} (主机 {uvicorn_bind_host}) 仍然被占用。"
+                            )
+                    else:
+                        logger.error(
+                            "无头模式下，不会尝试自动终止占用端口的进程。服务器启动可能会失败。"
+                            "（可设置 FORCE_KILL_OLD_PROCESSES=1 强制终止）"
+                        )
             else:
                 logger.warning(
                     f"未能自动识别占用端口 {server_target_port} 的进程。服务器启动可能会失败。"
@@ -369,6 +411,66 @@ class Launcher:  # pragma: no cover
         else:
             logger.debug(f"[系统] 服务端口 {server_target_port} 可用")
             port_is_available = True
+
+    def _check_stream_port(self) -> None:
+        """Check stream proxy port availability and optionally kill occupiers.
+
+        The stream proxy binds to 127.0.0.1:<stream_port> in server startup.
+        When a previous run is killed abruptly, its forked child may keep the
+        stream port occupied even if the FastAPI port is free.
+        """
+
+        stream_port = int(getattr(self.args, "stream_port", 0) or 0)
+        if stream_port <= 0:
+            logger.debug("[系统] Stream proxy 已禁用 (STREAM_PORT=0)")
+            return
+
+        logger.info(
+            f"--- 步骤 2.1: 检查 STREAM 代理端口 ({stream_port}) 是否被占用 ---"
+        )
+
+        force_kill_old = self._force_kill_old_processes_enabled()
+
+        # Stream proxy binds to 127.0.0.1 by default.
+        if find_pids_on_port(stream_port) or is_port_in_use(stream_port, host="127.0.0.1"):
+            pids_on_port = find_pids_on_port(stream_port)
+            logger.warning(
+                f"端口 {stream_port} (主机 127.0.0.1) 当前被占用。"
+            )
+
+            if pids_on_port:
+                logger.warning(
+                    f"识别到以下进程 PID 可能占用了端口 {stream_port}: {pids_on_port}"
+                )
+
+                if force_kill_old:
+                    logger.warning(
+                        "启动前检测到 STREAM 端口被占用，将强制终止占用端口的旧进程并重试。"
+                        "（可设置 FORCE_KILL_OLD_PROCESSES=0 禁用）"
+                    )
+                    for pid in pids_on_port:
+                        kill_process_interactive(pid)
+
+                    time.sleep(2)
+                    if not find_pids_on_port(stream_port) and not is_port_in_use(
+                        stream_port, host="127.0.0.1"
+                    ):
+                        logger.info(f"端口 {stream_port} (主机 127.0.0.1) 现在可用。")
+                    else:
+                        logger.error(
+                            f"尝试强制终止后，端口 {stream_port} (主机 127.0.0.1) 仍然被占用。"
+                        )
+                else:
+                    logger.error(
+                        "无头模式下，不会尝试自动终止占用 STREAM 端口的进程。"
+                        "（可设置 FORCE_KILL_OLD_PROCESSES=1 强制终止）"
+                    )
+            else:
+                logger.warning(
+                    f"未能自动识别占用端口 {stream_port} 的进程。STREAM 代理启动可能会失败。"
+                )
+        else:
+            logger.debug(f"[系统] STREAM 端口 {stream_port} 可用")
 
     def _resolve_auth_file_path(self):
         if self.args.active_auth_json:
