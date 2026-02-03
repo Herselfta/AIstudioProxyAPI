@@ -653,6 +653,9 @@ async def _process_request_refactored(  # pyright: ignore[reportUnusedFunction] 
         except Exception as clear_err:
             logger.warning(f"[Stream] 清空队列错误: {clear_err}")
 
+    import time
+    start_time = time.time()
+    
     context = await _initialize_request_context(req_id, request)
     context = await _analyze_model_requirements(req_id, context, request)
 
@@ -673,9 +676,15 @@ async def _process_request_refactored(  # pyright: ignore[reportUnusedFunction] 
             raise server_error(req_id, "Page is None in _process_request_refactored")
 
         page_controller = PageController(page, context["logger"], req_id)
+        
+        t_init = time.time()
+        logger.info(f"[Perf] Initialization took {t_init - start_time:.3f}s")
 
         await _handle_model_switching(req_id, context, check_client_disconnected)
         await _handle_parameter_cache(req_id, context)
+        
+        t_switch = time.time()
+        logger.info(f"[Perf] Model switch & validation took {t_switch - t_init:.3f}s")
 
         # Wrap entire processing section in silent context for visual hierarchy
         # This creates the base indentation level for Prompt Prep, Parameters, and Execution
@@ -699,6 +708,9 @@ async def _process_request_refactored(  # pyright: ignore[reportUnusedFunction] 
             if "stop" in request.model_fields_set and request.stop is None:
                 request_params["stop"] = None
 
+            t_prep = time.time()
+            logger.info(f"[Perf] Request prep took {t_prep - t_switch:.3f}s")
+
             # Wrap parameter adjustment in silent context
             with log_context("Adjusting Parameters", context["logger"], silent=True):
                 await page_controller.adjust_parameters(
@@ -709,6 +721,9 @@ async def _process_request_refactored(  # pyright: ignore[reportUnusedFunction] 
                     context["parsed_model_list"],
                     check_client_disconnected,
                 )
+            
+            t_params = time.time()
+            logger.info(f"[Perf] Parameter adjustment took {t_params - t_prep:.3f}s")
 
             # Optimization: Final check of client connection before submitting prompt
             check_client_disconnected("Final check before submitting prompt")
@@ -718,6 +733,9 @@ async def _process_request_refactored(  # pyright: ignore[reportUnusedFunction] 
                 await page_controller.submit_prompt(
                     prepared_prompt, image_list, check_client_disconnected
                 )
+            
+            t_submit = time.time()
+            logger.info(f"[Perf] Prompt submission took {t_submit - t_params:.3f}s")
 
         # Response processing still needs to be here as it determines streaming vs non-streaming and sets future
         response_result = await _handle_response_processing(
@@ -729,6 +747,9 @@ async def _process_request_refactored(  # pyright: ignore[reportUnusedFunction] 
             submit_button_locator,
             check_client_disconnected,
         )
+        
+        t_resp_setup = time.time()
+        logger.info(f"[Perf] Response setup took {t_resp_setup - t_submit:.3f}s")
 
         if response_result:
             # 动态解包，支持 3-tuple 和 4-tuple (带 stream_state)

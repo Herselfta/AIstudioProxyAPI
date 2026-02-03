@@ -29,6 +29,9 @@ class InputController(BaseController):
         self, prompt: str, image_list: List, check_client_disconnected: Callable
     ):
         """提交提示到页面。"""
+        import time
+        t_start = time.time()
+        
         set_request_id(self.req_id)
         self.logger.debug(f"[Input] 填充提示词 ({len(prompt)} chars)")
         prompt_textarea_locator = self.page.locator(PROMPT_TEXTAREA_SELECTOR)
@@ -83,6 +86,9 @@ class InputController(BaseController):
                 if not ok:
                     self.logger.error("在上传文件时发生错误: 通过菜单方式未能设置文件")
 
+            t_fill = time.time()
+            self.logger.debug(f"[Perf-Input] Fill & Upload took {t_fill - t_start:.3f}s")
+
             # 等待发送按钮启用 (使用可配置的快速失败超时)
             from config.timeouts import SUBMIT_BUTTON_ENABLE_TIMEOUT_MS
 
@@ -121,6 +127,9 @@ class InputController(BaseController):
                 await save_error_snapshot(f"submit_button_enable_timeout_{self.req_id}")
                 raise
 
+            t_enabled = time.time()
+            self.logger.debug(f"[Perf-Input] Wait Submit Button took {t_enabled - t_fill:.3f}s")
+            
             await self._check_disconnect(
                 check_client_disconnected, "After Submit Button Enabled"
             )
@@ -170,6 +179,9 @@ class InputController(BaseController):
                             "Submit failed: Button, Enter, and Combo key all failed"
                         )
 
+            t_clicked = time.time()
+            self.logger.debug(f"[Perf-Input] Click Action took {t_clicked - t_enabled:.3f}s")
+            
             await self._check_disconnect(check_client_disconnected, "After Submit")
 
         except Exception as e_input_submit:

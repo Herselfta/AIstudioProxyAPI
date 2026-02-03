@@ -50,8 +50,16 @@ async def gen_sse_from_aux_stream(
     full_body_content = ""
     data_receiving = False
 
+    t_start_stream = time.time()
+    first_packet_received = False
+
     try:
         async for raw_data in use_stream_response(req_id):
+            if not first_packet_received:
+                t_first = time.time()
+                logger.info(f"[Perf-Stream] Time to first packet from queue: {t_first - t_start_stream:.3f}s")
+                first_packet_received = True
+
             data_receiving = True
 
             try:

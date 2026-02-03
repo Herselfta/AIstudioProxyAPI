@@ -37,6 +37,9 @@ class ParameterController(BaseController):
         check_client_disconnected: Callable,
     ):
         """调整所有请求参数。"""
+        import time
+        t_start = time.time()
+        
         await self._check_disconnect(
             check_client_disconnected, "Start Parameter Adjustment"
         )
@@ -46,6 +49,9 @@ class ParameterController(BaseController):
         await self._adjust_temperature(
             temp_to_set, page_params_cache, params_cache_lock, check_client_disconnected
         )
+        t_temp = time.time()
+        self.logger.debug(f"[Perf-Param] Temperature took {t_temp - t_start:.3f}s")
+        
         await self._check_disconnect(
             check_client_disconnected, "After Temperature Adjustment"
         )
@@ -62,6 +68,9 @@ class ParameterController(BaseController):
             parsed_model_list,
             check_client_disconnected,
         )
+        t_tokens = time.time()
+        self.logger.debug(f"[Perf-Param] MaxTokens took {t_tokens - t_temp:.3f}s")
+        
         await self._check_disconnect(
             check_client_disconnected, "After Max Tokens Adjustment"
         )
@@ -71,6 +80,9 @@ class ParameterController(BaseController):
         await self._adjust_stop_sequences(
             stop_to_set, page_params_cache, params_cache_lock, check_client_disconnected
         )
+        t_stop = time.time()
+        self.logger.debug(f"[Perf-Param] StopSequences took {t_stop - t_tokens:.3f}s")
+        
         await self._check_disconnect(
             check_client_disconnected, "After Stop Sequences Adjustment"
         )
@@ -78,18 +90,25 @@ class ParameterController(BaseController):
         # 调整Top P
         top_p_to_set = request_params.get("top_p", DEFAULT_TOP_P)
         await self._adjust_top_p(top_p_to_set, check_client_disconnected)
+        t_topp = time.time()
+        self.logger.debug(f"[Perf-Param] TopP took {t_topp - t_stop:.3f}s")
+        
         await self._check_disconnect(
             check_client_disconnected, "End Parameter Adjustment"
         )
 
         # 确保工具面板已展开，以便调整高级设置
         await self._ensure_tools_panel_expanded(check_client_disconnected)
+        t_panel = time.time()
+        self.logger.debug(f"[Perf-Param] PanelExpand took {t_panel - t_topp:.3f}s")
 
         # 调整URL CONTEXT（允许按请求控制）
         if ENABLE_URL_CONTEXT:
             await self._open_url_content(check_client_disconnected)
         else:
             self.logger.debug("[Param] URL Context 功能已禁用，跳过调整")
+        
+        t_url = time.time()
 
         # 调整"思考预算" - handled by ThinkingController but called here to maintain flow?
         # Ideally adjust_parameters should coordinate, but if we split, we need to ensure method availability.
@@ -104,6 +123,8 @@ class ParameterController(BaseController):
         await self._adjust_google_search(
             request_params, model_id_to_use, check_client_disconnected
         )
+        t_end = time.time()
+        self.logger.debug(f"[Perf-Param] Rest (URL/Thinking/Google) took {t_end - t_url:.3f}s")
 
     async def _adjust_temperature(
         self,
