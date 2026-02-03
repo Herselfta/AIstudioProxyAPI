@@ -646,7 +646,8 @@ class ParameterController(BaseController):
                         if tool.get("google_search_retrieval") is not None:
                             has_google_search_tool = True
                             break
-                        if tool.get("function", {}).get("name") == "googleSearch":
+                        tool_name = tool.get("function", {}).get("name", "")
+                        if tool_name in ["googleSearch", "builtin_web_search", "web_search"]:
                             has_google_search_tool = True
                             break
             self.logger.debug(
@@ -682,6 +683,11 @@ class ParameterController(BaseController):
         if not self._supports_google_search(model_id):
             self.logger.debug("[Param] Google Search: 该模型不支持此功能，跳过")
             return
+
+        if "tools" in request_params:
+            self.logger.info(f"[Debug-Search] Receive Tools param: {request_params['tools']}")
+        else:
+            self.logger.info("[Debug-Search] No 'tools' param found in request.")
 
         should_enable_search = self._should_enable_google_search(request_params)
         desired_state = "On" if should_enable_search else "Off"
