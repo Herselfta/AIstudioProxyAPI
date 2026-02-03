@@ -50,7 +50,7 @@ class ParameterController(BaseController):
             temp_to_set, page_params_cache, params_cache_lock, check_client_disconnected
         )
         t_temp = time.time()
-        self.logger.debug(f"[Perf-Param] Temperature took {t_temp - t_start:.3f}s")
+        self.logger.info(f"[Perf-Param] Temperature took {t_temp - t_start:.3f}s")
         
         await self._check_disconnect(
             check_client_disconnected, "After Temperature Adjustment"
@@ -69,7 +69,7 @@ class ParameterController(BaseController):
             check_client_disconnected,
         )
         t_tokens = time.time()
-        self.logger.debug(f"[Perf-Param] MaxTokens took {t_tokens - t_temp:.3f}s")
+        self.logger.info(f"[Perf-Param] MaxTokens took {t_tokens - t_temp:.3f}s")
         
         await self._check_disconnect(
             check_client_disconnected, "After Max Tokens Adjustment"
@@ -81,7 +81,7 @@ class ParameterController(BaseController):
             stop_to_set, page_params_cache, params_cache_lock, check_client_disconnected
         )
         t_stop = time.time()
-        self.logger.debug(f"[Perf-Param] StopSequences took {t_stop - t_tokens:.3f}s")
+        self.logger.info(f"[Perf-Param] StopSequences took {t_stop - t_tokens:.3f}s")
         
         await self._check_disconnect(
             check_client_disconnected, "After Stop Sequences Adjustment"
@@ -91,7 +91,7 @@ class ParameterController(BaseController):
         top_p_to_set = request_params.get("top_p", DEFAULT_TOP_P)
         await self._adjust_top_p(top_p_to_set, check_client_disconnected)
         t_topp = time.time()
-        self.logger.debug(f"[Perf-Param] TopP took {t_topp - t_stop:.3f}s")
+        self.logger.info(f"[Perf-Param] TopP took {t_topp - t_stop:.3f}s")
         
         await self._check_disconnect(
             check_client_disconnected, "End Parameter Adjustment"
@@ -100,7 +100,7 @@ class ParameterController(BaseController):
         # 确保工具面板已展开，以便调整高级设置
         await self._ensure_tools_panel_expanded(check_client_disconnected)
         t_panel = time.time()
-        self.logger.debug(f"[Perf-Param] PanelExpand took {t_panel - t_topp:.3f}s")
+        self.logger.info(f"[Perf-Param] PanelExpand took {t_panel - t_topp:.3f}s")
 
         # 调整URL CONTEXT（允许按请求控制）
         if ENABLE_URL_CONTEXT:
@@ -124,7 +124,7 @@ class ParameterController(BaseController):
             request_params, model_id_to_use, check_client_disconnected
         )
         t_end = time.time()
-        self.logger.debug(f"[Perf-Param] Rest (URL/Thinking/Google) took {t_end - t_url:.3f}s")
+        self.logger.info(f"[Perf-Param] Rest (URL/Thinking/Google) took {t_end - t_url:.3f}s")
 
     async def _adjust_temperature(
         self,

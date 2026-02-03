@@ -87,7 +87,7 @@ class InputController(BaseController):
                     self.logger.error("在上传文件时发生错误: 通过菜单方式未能设置文件")
 
             t_fill = time.time()
-            self.logger.debug(f"[Perf-Input] Fill & Upload took {t_fill - t_start:.3f}s")
+            self.logger.info(f"[Perf-Input] Fill & Upload took {t_fill - t_start:.3f}s")
 
             # 等待发送按钮启用 (使用可配置的快速失败超时)
             from config.timeouts import SUBMIT_BUTTON_ENABLE_TIMEOUT_MS
@@ -128,7 +128,7 @@ class InputController(BaseController):
                 raise
 
             t_enabled = time.time()
-            self.logger.debug(f"[Perf-Input] Wait Submit Button took {t_enabled - t_fill:.3f}s")
+            self.logger.info(f"[Perf-Input] Wait Submit Button took {t_enabled - t_fill:.3f}s")
             
             await self._check_disconnect(
                 check_client_disconnected, "After Submit Button Enabled"
@@ -180,7 +180,7 @@ class InputController(BaseController):
                         )
 
             t_clicked = time.time()
-            self.logger.debug(f"[Perf-Input] Click Action took {t_clicked - t_enabled:.3f}s")
+            self.logger.info(f"[Perf-Input] Click Action took {t_clicked - t_enabled:.3f}s")
             
             await self._check_disconnect(check_client_disconnected, "After Submit")
 
