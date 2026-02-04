@@ -36,12 +36,12 @@ async def chat_completions(
     set_source("API")
 
     logger.info(f"收到 /v1/chat/completions 请求 (Stream={request.stream})")
-    try:
-        raw_body = await http_request.body()
-        logger.info(f"原始请求内容 (Raw body): {raw_body.decode('utf-8')}")
-        logger.info(f"模型序列化内容: {request.model_dump_json(indent=2, exclude_none=True)}")
-    except Exception as e:
-        logger.warning(f"由于 {e} 无法完整记录请求内容")
+    # try:
+    #     raw_body = await http_request.body()
+    #     logger.info(f"原始请求内容 (Raw body): {raw_body.decode('utf-8')}")
+    #     logger.info(f"模型序列化内容: {request.model_dump_json(indent=2, exclude_none=True)}")
+    # except Exception as e:
+    #     logger.warning(f"由于 {e} 无法完整记录请求内容")
 
     launch_mode = get_environment_variable("LAUNCH_MODE", "unknown")
     browser_page_critical = launch_mode != "direct_debug_no_browser"
