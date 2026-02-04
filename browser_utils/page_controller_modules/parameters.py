@@ -647,7 +647,7 @@ class ParameterController(BaseController):
                             has_google_search_tool = True
                             break
                         tool_name = tool.get("function", {}).get("name", "")
-                        if tool_name in ["googleSearch", "builtin_web_search", "web_search"]:
+                        if tool_name in ["googleSearch", "google_search", "builtin_web_search", "web_search", "webSearch", "search", "online_search"]:
                             has_google_search_tool = True
                             break
             self.logger.debug(

@@ -9,6 +9,11 @@ memory-bank/
 *.DS_Store
 venv/
 env/
-# auth_profiles/ # Handled by volume mount
-# certs/         # Handled by volume mount or generated in container
-# logs/          # Supervisord logs to stdout/stderr
+auth_profiles/  # Handled by volume mount
+certs/          # Handled by volume mount or generated in container
+logs/           # Supervisord logs to stdout/stderr
+upload_files/
+.coverage*
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

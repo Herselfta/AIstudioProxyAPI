@@ -1,1 +1,1 @@
-poetry run python launch_camoufox.py --headless
+python launch_camoufox.py --headless

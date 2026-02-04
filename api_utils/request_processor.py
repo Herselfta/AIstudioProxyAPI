@@ -160,10 +160,36 @@ async def _prepare_and_validate_request(
     except ValueError as e:
         raise bad_request(req_id, f"Invalid request: {e}")
 
+    # Filter out Google Search tools from prompt/execution to rely on UI toggle
+    raw_tools = getattr(request, "tools", None)
+    effective_tools = raw_tools
+    if raw_tools:
+        search_names = {
+            "googleSearch",
+            "google_search",
+            "builtin_web_search",
+            "web_search",
+            "webSearch",
+            "search",
+            "online_search",
+        }
+        filtered = []
+        for t in raw_tools:
+            # Handle both OpenAI format and simple dict
+            fname = None
+            if "function" in t and isinstance(t["function"], dict):
+                fname = t["function"].get("name")
+            else:
+                fname = t.get("name")
+            
+            if fname not in search_names:
+                filtered.append(t)
+        effective_tools = filtered
+
     prepared_prompt, images_list = prepare_combined_prompt(
         request.messages,
         req_id,
-        getattr(request, "tools", None),
+        effective_tools,
         getattr(request, "tool_choice", None),
     )
 
@@ -174,10 +200,10 @@ async def _prepare_and_validate_request(
             from .tools_registry import register_runtime_tools
 
             register_runtime_tools(
-                getattr(request, "tools", None), request.mcp_endpoint
+                effective_tools, request.mcp_endpoint
             )
         tool_exec_results = await maybe_execute_tools(
-            request.messages, request.tools, getattr(request, "tool_choice", None)
+            request.messages, effective_tools, getattr(request, "tool_choice", None)
         )
     except asyncio.CancelledError:
         raise

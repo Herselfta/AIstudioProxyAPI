@@ -48,7 +48,7 @@ def setup_launcher_logging(log_level: int = logging.INFO) -> None:
     file_handler.setFormatter(file_log_formatter)
     logger.addHandler(file_handler)
 
-    stream_handler = logging.StreamHandler(sys.stderr)
+    stream_handler = logging.StreamHandler(sys.stdout)
     stream_handler.setFormatter(console_log_formatter)
     logger.addHandler(stream_handler)
 

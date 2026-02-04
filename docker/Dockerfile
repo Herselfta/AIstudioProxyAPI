@@ -34,6 +34,7 @@ ARG PROXY_ADDR
 
 ENV HTTP_PROXY=${PROXY_ADDR}
 ENV HTTPS_PROXY=${PROXY_ADDR}
+ENV TZ=Asia/Shanghai
 
 # 步骤 1: 安装所有系统依赖。
 # Playwright 的依赖也在这里一并安装。
@@ -61,24 +62,32 @@ COPY --from=builder /usr/local/lib/python3.10/site-packages/ /usr/local/lib/pyth
 COPY --from=builder /usr/local/bin/ /usr/local/bin/
 COPY --from=builder /opt/poetry/bin/poetry /usr/local/bin/poetry
 
-# 复制应用代码
-COPY . .
+# 复制应用代码（直接设置属主，避免后续 chown -R 过慢）
+COPY --chown=appuser:appgroup . .
 
 # 步骤 3: 现在 Python 模块已存在，可以安全地运行这些命令。
 # 注意：我们不再需要 `playwright install-deps`，因为依赖已在上面的 apt-get 中安装。
 RUN camoufox fetch && \
     python -m playwright install firefox
 
-# 创建目录和设置权限
-RUN mkdir -p /app/logs && \
-    mkdir -p /app/auth_profiles/active && \
-    mkdir -p /app/auth_profiles/saved && \
-    mkdir -p /app/certs && \
-    mkdir -p /app/browser_utils/custom_scripts && \
-    mkdir -p /home/appuser/.cache/ms-playwright && \
-    mkdir -p /home/appuser/.mozilla && \
-    chown -R appuser:appgroup /app && \
-    chown -R appuser:appgroup /home/appuser
+# 创建目录和设置权限（避免递归 chown 扫描整个 /app）
+RUN mkdir -p /app/logs \
+    /app/auth_profiles/active \
+    /app/auth_profiles/saved \
+    /app/certs \
+    /app/browser_utils/custom_scripts \
+    /home/appuser/.cache/ms-playwright \
+    /home/appuser/.mozilla && \
+    chown -R appuser:appgroup /home/appuser && \
+    chown appuser:appgroup \
+      /app \
+      /app/logs \
+      /app/auth_profiles \
+      /app/auth_profiles/active \
+      /app/auth_profiles/saved \
+      /app/certs \
+      /app/browser_utils \
+      /app/browser_utils/custom_scripts
 
 COPY supervisord.conf /etc/supervisor/conf.d/app.conf
 
